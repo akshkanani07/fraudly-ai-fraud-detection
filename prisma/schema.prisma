@@ -1,0 +1,397 @@
+// ============================================================
+// Fraudly - Database Schema (Prisma 7, PostgreSQL)
+// Database URL lives in prisma.config.ts (Prisma 7 requirement).
+// ============================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ------------------------------------------------------------
+// Enums
+// ------------------------------------------------------------
+
+enum DatasetStatus {
+  UPLOADED
+  PROCESSING
+  CLEANED
+  FAILED
+}
+
+enum MlAlgorithm {
+  LOGISTIC_REGRESSION
+  RANDOM_FOREST
+  XGBOOST
+}
+
+enum MlModelStatus {
+  TRAINING
+  READY
+  FAILED
+  ARCHIVED
+}
+
+enum TransactionStatus {
+  PENDING
+  APPROVED
+  FLAGGED
+  BLOCKED
+}
+
+enum TransactionChannel {
+  ONLINE
+  POS
+  ATM
+  MOBILE
+  TRANSFER
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ReportType {
+  FRAUD_SUMMARY
+  TRANSACTION_REPORT
+  MODEL_PERFORMANCE
+  AUDIT_REPORT
+}
+
+enum ReportFormat {
+  PDF
+  CSV
+  XLSX
+}
+
+enum ReportStatus {
+  PENDING
+  GENERATING
+  COMPLETED
+  FAILED
+}
+
+enum NotificationType {
+  FRAUD_ALERT
+  MODEL_TRAINED
+  DATASET_PROCESSED
+  REPORT_READY
+  SECURITY
+  SYSTEM
+}
+
+// ------------------------------------------------------------
+// Authentication (Better Auth + admin plugin for RBAC)
+// ------------------------------------------------------------
+
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  role          String    @default("user")
+  banned        Boolean   @default(false)
+  banReason     String?
+  banExpires    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions       Session[]
+  accounts       Account[]
+  datasets       Dataset[]
+  models         MlModel[]
+  transactions   Transaction[]
+  predictions    Prediction[]
+  reports        Report[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+  settingUpdates SystemSetting[]
+
+  @@index([role])
+  @@index([createdAt])
+  @@map("users")
+}
+
+model Session {
+  id             String   @id
+  expiresAt      DateTime
+  token          String   @unique
+  ipAddress      String?
+  userAgent      String?
+  impersonatedBy String?
+  userId         String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@index([expiresAt])
+  @@map("verifications")
+}
+
+// ------------------------------------------------------------
+// Datasets
+// ------------------------------------------------------------
+
+model Dataset {
+  id              String        @id @default(cuid())
+  name            String
+  description     String?
+  fileName        String
+  fileUrl         String
+  filePublicId    String        @unique
+  fileSize        Int
+  rowCount        Int?
+  columnCount     Int?
+  columns         Json?
+  targetColumn    String?
+  status          DatasetStatus @default(UPLOADED)
+  processingError String?
+  cleaningSummary Json?
+  uploadedById    String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  uploadedBy   User?         @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  models       MlModel[]
+  transactions Transaction[]
+
+  @@index([status])
+  @@index([uploadedById])
+  @@index([createdAt])
+  @@map("datasets")
+}
+
+// ------------------------------------------------------------
+// Machine learning models
+// ------------------------------------------------------------
+
+model MlModel {
+  id                String        @id @default(cuid())
+  name              String
+  version           Int
+  algorithm         MlAlgorithm
+  status            MlModelStatus @default(TRAINING)
+  isActive          Boolean       @default(false)
+  datasetId         String?
+  trainedById       String?
+  hyperparameters   Json?
+  featureColumns    Json?
+  featureImportance Json?
+  trainingRows      Int?
+  accuracy          Float?
+  precision         Float?
+  recall            Float?
+  f1Score           Float?
+  rocAuc            Float?
+  confusionMatrix   Json?
+  artifactPath      String?
+  trainingError     String?
+  trainingStartedAt DateTime?
+  trainedAt         DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+    mlModelId         String?       @unique
+  dataset     Dataset?     @relation(fields: [datasetId], references: [id], onDelete: SetNull)
+  trainedBy   User?        @relation(fields: [trainedById], references: [id], onDelete: SetNull)
+  predictions Prediction[]
+
+  @@unique([name, version])
+  @@index([status])
+  @@index([isActive])
+  @@index([algorithm])
+  @@index([datasetId])
+  @@index([createdAt])
+  @@map("ml_models")
+}
+
+// ------------------------------------------------------------
+// Transactions and predictions
+// ------------------------------------------------------------
+
+model Transaction {
+  id           String             @id @default(cuid())
+  externalId   String?            @unique
+  amount       Decimal            @db.Decimal(14, 2)
+  currency     String             @default("USD") @db.VarChar(3)
+  merchant     String?
+  category     String?
+  channel      TransactionChannel @default(ONLINE)
+  customerId   String?
+  deviceId     String?
+  ipAddress    String?
+  country      String?            @db.VarChar(2)
+  features     Json?
+  isFraudLabel Boolean?
+  status       TransactionStatus  @default(PENDING)
+  transactedAt DateTime           @default(now())
+  datasetId    String?
+  createdById  String?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  dataset     Dataset?     @relation(fields: [datasetId], references: [id], onDelete: SetNull)
+  createdBy   User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  predictions Prediction[]
+
+  @@index([status])
+  @@index([transactedAt])
+  @@index([customerId])
+  @@index([merchant])
+  @@index([datasetId])
+  @@index([createdById])
+  @@index([status, transactedAt])
+  @@map("transactions")
+}
+
+model Prediction {
+  id               String    @id @default(cuid())
+  transactionId    String
+  modelId          String
+  isFraud          Boolean
+  fraudProbability Float
+  confidence       Float
+  riskLevel        RiskLevel
+  explanation      Json?
+  latencyMs        Int?
+  requestedById    String?
+  createdAt        DateTime  @default(now())
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  model       MlModel     @relation(fields: [modelId], references: [id], onDelete: Restrict)
+  requestedBy User?       @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+
+  @@index([transactionId])
+  @@index([modelId])
+  @@index([isFraud])
+  @@index([riskLevel])
+  @@index([createdAt])
+  @@index([requestedById])
+  @@map("predictions")
+}
+
+// ------------------------------------------------------------
+// Reports and notifications
+// ------------------------------------------------------------
+
+model Report {
+  id            String       @id @default(cuid())
+  title         String
+  type          ReportType
+  format        ReportFormat @default(PDF)
+  status        ReportStatus @default(PENDING)
+  parameters    Json?
+  fileUrl       String?
+  filePublicId  String?
+  errorMessage  String?
+  generatedById String?
+  completedAt   DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  generatedBy User? @relation(fields: [generatedById], references: [id], onDelete: SetNull)
+
+  @@index([type])
+  @@index([status])
+  @@index([generatedById])
+  @@index([createdAt])
+  @@map("reports")
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?
+  isRead    Boolean          @default(false)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// ------------------------------------------------------------
+// Audit logs and system settings
+// ------------------------------------------------------------
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model SystemSetting {
+  key         String   @id
+  value       Json
+  description String?
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+
+  updatedBy User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("system_settings")
+}

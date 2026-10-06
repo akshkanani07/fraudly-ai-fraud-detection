@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Prisma generated client
+/src/generated/prisma
+
+# ML backend
+ml-backend/.venv/
+ml-backend/.env
+ml-backend/models/*.joblib
+ml-backend/models/*.json
+ml-backend/datasets/*
+__pycache__/
+.pytest_cache/
